@@ -1,8 +1,12 @@
 import logging
 
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
 
 # Set up a logger for this module
 logger = logging.getLogger(__name__)
@@ -14,52 +18,79 @@ if not logger.handlers:
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-
-def train_model(X, y):
+def gridsearch_LR(
+    preprocessor: ColumnTransformer,
+    C: list[float],
+    penalty: list[str],
+    solver: list[str],
+    max_iter: list[int]
+) -> GridSearchCV:
     """
-    Trains a logistic regression model using GridSearchCV
-    and evaluates it on a validation set.
+    Creates a GridSearchCV object for logistic regression
+    using a given preprocessing pipeline.
 
     Parameters:
-    - X: pd.DataFrame, feature matrix
-    - y: pd.Series or np.array, target labels
+    - preprocessor: Preprocessing steps to apply before classification.
+    - C: list of float, inverse regularization strengths to try.
+    - penalty: list of str, types of regularization ('l1', 'l2').
+    - solver: list of str, solvers to use for optimization.
+    - max_iter: list of int, maximum iterations allowed for convergence.
 
     Returns:
-    - best_model: Trained sklearn LogisticRegression model with best hyperparameters
+    - GridSearchCV object ready to be fitted on training data.
     """
-    # Split the dataset into training and validation sets
-    logger.info("Splitting data...")
 
-    X_train, X_val, y_train, y_val = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=10
-    )
+    # Complete Pipeline, preprocessing + model
+    logger.info("Creating Pipeline...")
 
-    # Define hyperparameter grid for GridSearchCV
-    logger.info("Starting GridSearchCV for LogisticRegression...")
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('clf', LogisticRegression(class_weight='balanced', random_state=20))
+    ])
 
     param_grid = {
-        # Inverse of regularization strength
-        # Smaller values mean stronger regularization
-        'C': [0.001, 0.01, 0.1, 1, 10, 100],
-        # Norm used in the penalization, 'l2' is Ridge-like
-        'penalty': ['l2'],
-        # Algorithm used to optimize the cost function
-        'solver': ['liblinear', 'lbfgs'],
-        # Maximum number of iterations taken for the solvers to converge
-        'max_iter': [500, 1000, 2000]
+        'clf__C': C,
+        'clf__penalty': penalty,
+        'clf__solver': solver,
+        'clf__max_iter': max_iter
     }
 
+    logger.info(f"Hyperparameter grid: {param_grid}")
+
     # Perform grid search with 5-fold cross-validation
+    logger.info("Starting GridSearchCV...")
+
     grid = GridSearchCV(
-        LogisticRegression(class_weight='balanced'),
+        pipeline,
         param_grid,
         cv=5,
         scoring='accuracy',
         n_jobs=-1
     )
+
+    return grid
+
+def train_model(
+    grid: GridSearchCV,
+    X_train: pd.DataFrame,
+    y_train: pd.Series | np.ndarray,
+    X_test: pd.DataFrame,
+    y_test: pd.Series | np.ndarray
+) -> tuple[Pipeline, pd.DataFrame, pd.Series]:
+    """
+    Fits the GridSearchCV object on the training data and
+    evaluates the best model on test data.
+
+    Parameters:
+    - grid: Grid search object returned by `gridsearch_LR`.
+    - X_train: Features for training.
+    - y_train: Target values for training.
+    - X_test: Features for testing.
+    - y_test: Target values for testing.
+
+    Returns:
+    - best_model: The best model found during grid search.
+    """
 
     # Fit the model on the training set
     grid.fit(X_train, y_train)
@@ -71,15 +102,16 @@ def train_model(X, y):
     # Get the best model from grid search
     best_model = grid.best_estimator_
 
-    # Make predictions on the validation set
-    y_val_preds = best_model.predict(X_val)
+    # Make predictions on the test set
+    y_test_preds = best_model.predict(X_test)
 
     # Log evaluation metrics
-    logger.info("Evaluation on validation set:")
-    logger.info(f"Accuracy: {accuracy_score(y_val, y_val_preds):.4f}")
-    logger.info("Confusion matrix:\n%s", confusion_matrix(y_val, y_val_preds))
-    logger.info("Classification report:\n%s", classification_report(y_val, y_val_preds))
+    logger.info("- Evaluation on test set -")
+    logger.info(f"Accuracy: {accuracy_score(y_test, y_test_preds):.4f}")
+    logger.info("Confusion matrix:\n%s", confusion_matrix(y_test, y_test_preds))
+    logger.info("Classification report:\n%s", classification_report(y_test,
+                                                                    y_test_preds)
+                                                                )
 
     return best_model
-
 
